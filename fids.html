@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Live Departures – Doha (DOH)</title>
+
+<!-- Disable caching -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+
+<style>
+    body {
+        background: #001428;
+        color: #ffffff;
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 0;
+    }
+
+    .header {
+        background: linear-gradient(to right, #003366, #0055a5);
+        padding: 20px;
+        text-align: center;
+        font-size: 32px;
+        font-weight: bold;
+        letter-spacing: 2px;
+    }
+
+    .subheader {
+        text-align: center;
+        font-size: 16px;
+        padding: 6px 20px 12px;
+        color: #a0c4ff;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 20px;
+    }
+
+    th {
+        background: #003366;
+        padding: 10px;
+        color: #aad4ff;
+        border-bottom: 2px solid #0055a5;
+        text-align: left;
+    }
+
+    td {
+        padding: 10px;
+        border-bottom: 1px solid #004a80;
+    }
+
+    tr:nth-child(even) {
+        background-color: rgba(0, 40, 80, 0.6);
+    }
+
+    .status-scheduled { color: #ffd700; }  /* yellow */
+    .status-active    { color: #7CFC00; }  /* green */
+    .status-landing   { color: #7CFC00; }
+    .status-delayed   { color: #ff6347; }  /* red */
+    .status-cancelled { color: #ff4500; }
+    .status-unknown   { color: #cccccc; }
+
+    .footer {
+        padding: 8px 20px;
+        font-size: 14px;
+        color: #88aacc;
+        text-align: right;
+    }
+
+    .error {
+        text-align: center;
+        color: #ff8080;
+        padding: 15px;
+        font-size: 18px;
+    }
+
+    .loading {
+        text-align: center;
+        color: #a0c4ff;
+        padding: 15px;
+        font-size: 18px;
+    }
+</style>
+</head>
+<body>
+
+<div class="header">Departures – Doha (DOH)</div>
+<div class="subheader">Live data from AviationStack API</div>
+
+<div id="message" class="loading">Loading live departures…</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Airline</th>
+            <th>Flight</th>
+            <th>To</th>
+            <th>Sched</th>
+            <th>Est</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody id="flightData"></tbody>
+</table>
+
+<div class="footer">
+    Updated at: <span id="lastUpdate">–</span>
+</div>
+
+<script>
+const API_URL =
+    "http://api.aviationstack.com/v1/flights" +
+    "?access_key=f76cc7a734cbd9daae6d9ec1e653f60a" +
+    "&dep_iata=DOH";
+
+/* Helper: format time nicely (HH:MM) */
+function formatTime(iso) {
+    if (!iso) return "-";
+    try {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleTimeString("en-GB", {
+            hour: "2-digit",
+            minute: "2-digit"
+        });
+    } catch (e) {
+        return iso;
+    }
+}
+
+/* Helper: map status to CSS class */
+function statusClass(status) {
+    if (!status) return "status-unknown";
+    status = status.toLowerCase();
+    if (status.includes("cancel")) return "status-cancelled";
+    if (status.includes("delay"))  return "status-delayed";
+    if (status.includes("active")) return "status-active";
+    if (status.includes("land"))  return "status-landing";
+    if (status.includes("sched")) return "status-scheduled";
+    return "status-unknown";
+}
+
+async function loadFlights() {
+    const msgEl = document.getElementById("message");
+    const tbody = document.getElementById("flightData");
+    const lastUpdateEl = document.getElementById("lastUpdate");
+
+    msgEl.textContent = "Loading live departures…";
+    msgEl.className = "loading";
+
+    try {
+        const res = await fetch(API_URL);
+        const json = await res.json();
+
+        if (!json || !Array.isArray(json.data)) {
+            msgEl.textContent = "No data received from API.";
+            msgEl.className = "error";
+            return;
+        }
+
+        let flights = json.data;
+
+        // Sort by scheduled time
+        flights = flights
+            .filter(f => f.departure && f.departure.scheduled)
+            .sort((a, b) => new Date(a.departure.scheduled) - new Date(b.departure.scheduled))
+            .slice(0, 25); // limit to 25 flights
+
+        let html = "";
+
+        flights.forEach(f => {
+            const airlineName   = (f.airline && f.airline.name) ? f.airline.name : "-";
+            const flightCode    = (f.flight && (f.flight.iata || f.flight.icao)) || "-";
+            const destIata      = (f.arrival && f.arrival.iata) ? f.arrival.iata : "-";
+            const schedTime     = formatTime(f.departure && f.departure.scheduled);
+            const estTime       = formatTime(f.departure && f.departure.estimated);
+            const status        = f.flight_status || "-";
+            const statusCls     = statusClass(status);
+
+            html += `
+                <tr>
+                    <td>${airlineName}</td>
+                    <td>${flightCode}</td>
+                    <td>${destIata}</td>
+                    <td>${schedTime}</td>
+                    <td>${estTime}</td>
+                    <td class="${statusCls}">${status.toUpperCase()}</td>
+                </tr>
+            `;
+        });
+
+        tbody.innerHTML = html || `<tr><td colspan="6">No departures found.</td></tr>`;
+        msgEl.textContent = "";
+        msgEl.className = "";
+        lastUpdateEl.textContent = new Date().toLocaleTimeString("en-GB");
+
+    } catch (error) {
+        console.error("Error loading flights", error);
+        msgEl.textContent = "Error loading live data.";
+        msgEl.className = "error";
+    }
+}
+
+// First load
+loadFlights();
+
+// Refresh every 60 seconds
+setInterval(loadFlights, 60000);
+</script>
+
+</body>
+</html>
